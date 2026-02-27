@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import * as XLSX from "xlsx";
 
 // ─── COLORS ──────────────────────────────────────────────────────────────────
@@ -240,6 +240,34 @@ const s = {
   empty: { textAlign:"center", padding:"60px 24px", color:C.muted, fontSize:12 },
   emptyIcon: { fontSize:32, marginBottom:10 },
 
+  // Product search autocomplete
+  searchWrap: { position:"relative", marginBottom:12 },
+  searchInput: {
+    width:"100%", background:C.bg, border:`1px solid ${C.border}`, borderRadius:6,
+    padding:"10px 36px 10px 13px", color:C.text, fontFamily:"'DM Mono',monospace", fontSize:12,
+    outline:"none", boxSizing:"border-box", transition:"border-color 0.15s",
+  },
+  searchIcon: { position:"absolute", right:11, top:"50%", transform:"translateY(-50%)", color:C.mutedLight, fontSize:14, pointerEvents:"none" },
+  dropdown: {
+    position:"absolute", top:"calc(100% + 4px)", left:0, right:0, zIndex:50,
+    background:C.surface2, border:`1px solid ${C.border}`, borderRadius:8,
+    maxHeight:260, overflowY:"auto", boxShadow:"0 8px 32px #00000060",
+  },
+  dropItem: (hi) => ({
+    padding:"9px 13px", cursor:"pointer", display:"flex", alignItems:"center", gap:10,
+    background: hi ? C.accentBg : "transparent", transition:"background 0.1s",
+    borderBottom:`1px solid ${C.border}22`,
+  }),
+  dropCode: { fontSize:11, fontWeight:700, color:C.accent, flexShrink:0, minWidth:70 },
+  dropName: { fontSize:11, color:C.dim, flex:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" },
+  dropAdded: { fontSize:10, color:C.mutedLight, flexShrink:0 },
+  dropEmpty: { padding:"14px 13px", fontSize:11, color:C.muted, textAlign:"center" },
+  selectedTags: { display:"flex", flexWrap:"wrap", gap:6, marginBottom:10 },
+  tag: { display:"flex", alignItems:"center", gap:5, background:C.accentBg, border:`1px solid ${C.accentBorder}`, borderRadius:4, padding:"2px 8px", fontSize:11 },
+  tagCode: { color:C.accent, fontWeight:700 },
+  tagName: { color:C.dim, maxWidth:160, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" },
+  tagX: { color:C.mutedLight, cursor:"pointer", fontSize:13, lineHeight:1, padding:"0 2px" },
+
   // Modal
   modalOverlay: { position:"fixed", inset:0, background:"#00000080", display:"flex", alignItems:"center", justifyContent:"center", zIndex:100 },
   modal: { background:C.surface2, border:`1px solid ${C.border}`, borderRadius:12, padding:28, width:360, maxWidth:"90vw" },
@@ -272,6 +300,143 @@ function ProgressBar({ value, max, color = C.accent }) {
   return (
     <div style={{ background:C.border, borderRadius:3, height:4, width:80, overflow:"hidden" }}>
       <div style={{ width:`${pct}%`, height:"100%", background:color, transition:"width 0.3s" }} />
+    </div>
+  );
+}
+
+// ─── PRODUCT SEARCH AUTOCOMPLETE ─────────────────────────────────────────────
+function ProductSearch({ rows, value, onChange, placeholder = "Tìm theo tên hàng để thêm mã..." }) {
+  const [text, setText] = useState("");
+  const [open, setOpen] = useState(false);
+  const [hiIdx, setHiIdx] = useState(0);
+  const inputRef = useRef();
+  const dropRef = useRef();
+
+  // Build unique product catalog from rows
+  const catalog = useMemo(() => {
+    const map = {};
+    rows.forEach(r => {
+      if (r.maHang && !map[r.maHang]) map[r.maHang] = r.tenHang;
+    });
+    return Object.entries(map).map(([maHang, tenHang]) => ({ maHang, tenHang }));
+  }, [rows]);
+
+  // Already-added codes from current query value
+  const addedCodes = useMemo(() => new Set(parseCodes(value)), [value]);
+
+  // Filter suggestions
+  const suggestions = useMemo(() => {
+    if (!text.trim()) return [];
+    const q = text.trim().toLowerCase();
+    return catalog.filter(p =>
+      p.tenHang.toLowerCase().includes(q) || p.maHang.toLowerCase().includes(q)
+    ).slice(0, 40);
+  }, [text, catalog]);
+
+  useEffect(() => { setHiIdx(0); }, [suggestions]);
+
+  // Close on outside click
+  useEffect(() => {
+    const handler = (e) => {
+      if (!dropRef.current?.contains(e.target) && !inputRef.current?.contains(e.target))
+        setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  const addCode = (maHang) => {
+    if (addedCodes.has(maHang)) return;
+    const current = value.trim();
+    onChange(current ? current + "\n" + maHang : maHang);
+    setText("");
+    setOpen(false);
+    inputRef.current?.focus();
+  };
+
+  const removeCode = (code) => {
+    const codes = parseCodes(value).filter(c => c !== code);
+    onChange(codes.join("\n"));
+  };
+
+  const handleKey = (e) => {
+    if (!open || suggestions.length === 0) return;
+    if (e.key === "ArrowDown") { e.preventDefault(); setHiIdx(i => Math.min(i + 1, suggestions.length - 1)); }
+    if (e.key === "ArrowUp") { e.preventDefault(); setHiIdx(i => Math.max(i - 1, 0)); }
+    if (e.key === "Enter") { e.preventDefault(); if (suggestions[hiIdx]) addCode(suggestions[hiIdx].maHang); }
+    if (e.key === "Escape") setOpen(false);
+  };
+
+  // Highlight matching text
+  const highlight = (str, q) => {
+    const idx = str.toLowerCase().indexOf(q.toLowerCase());
+    if (idx === -1) return str;
+    return (
+      <>
+        {str.slice(0, idx)}
+        <span style={{ color:C.accent, fontWeight:700 }}>{str.slice(idx, idx + q.length)}</span>
+        {str.slice(idx + q.length)}
+      </>
+    );
+  };
+
+  // Selected tags (codes already in query)
+  const selectedProducts = useMemo(() =>
+    [...addedCodes].map(code => ({
+      code,
+      name: catalog.find(p => p.maHang === code)?.tenHang || "",
+    })), [addedCodes, catalog]);
+
+  return (
+    <div>
+      {/* Tags of selected codes */}
+      {selectedProducts.length > 0 && (
+        <div style={s.selectedTags}>
+          {selectedProducts.map(p => (
+            <span key={p.code} style={s.tag}>
+              <span style={s.tagCode}>{p.code}</span>
+              {p.name && <span style={s.tagName}>{p.name}</span>}
+              <span style={s.tagX} onClick={() => removeCode(p.code)}>×</span>
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* Search input */}
+      <div style={s.searchWrap}>
+        <input
+          ref={inputRef}
+          style={s.searchInput}
+          placeholder={placeholder}
+          value={text}
+          onChange={e => { setText(e.target.value); setOpen(true); }}
+          onFocus={() => { if (text) setOpen(true); }}
+          onKeyDown={handleKey}
+        />
+        <span style={s.searchIcon}>⌕</span>
+
+        {/* Dropdown */}
+        {open && text.trim() && (
+          <div ref={dropRef} style={s.dropdown}>
+            {suggestions.length === 0 ? (
+              <div style={s.dropEmpty}>Không tìm thấy sản phẩm nào</div>
+            ) : (
+              suggestions.map((p, i) => (
+                <div
+                  key={p.maHang}
+                  style={s.dropItem(i === hiIdx)}
+                  onMouseEnter={() => setHiIdx(i)}
+                  onMouseDown={e => { e.preventDefault(); addCode(p.maHang); }}
+                >
+                  <span style={s.dropCode}>{highlight(p.maHang, text)}</span>
+                  <span style={s.dropName}>{highlight(p.tenHang, text)}</span>
+                  {addedCodes.has(p.maHang) && <span style={s.dropAdded}>✓ đã thêm</span>}
+                </div>
+              ))
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -546,7 +711,10 @@ export default function App() {
                 {tab === "lookup" && (
                   <>
                     <div style={s.panel}>
-                      <label style={s.label}>Nhập mã hàng cần tra cứu</label>
+                      <label style={s.label}>Tìm theo tên hàng</label>
+                      <ProductSearch rows={activeRows} value={query} onChange={setQuery} />
+
+                      <label style={{ ...s.label, marginTop:12 }}>Hoặc nhập mã hàng trực tiếp</label>
                       <textarea
                         style={s.textarea}
                         placeholder={"933936\n933942, 933951\n934020"}
@@ -673,7 +841,10 @@ export default function App() {
                 {tab === "coverage" && (
                   <>
                     <div style={s.panel}>
-                      <label style={s.label}>Danh sách mã hàng cần kiểm tra</label>
+                      <label style={s.label}>Tìm theo tên hàng</label>
+                      <ProductSearch rows={activeRows} value={coverageQuery} onChange={setCoverageQuery} />
+
+                      <label style={{ ...s.label, marginTop:12 }}>Hoặc nhập mã hàng trực tiếp</label>
                       <textarea
                         style={s.textarea}
                         placeholder={"Nhập các mã cần kiểm tra, ví dụ:\n933936\n933942\n933951"}
