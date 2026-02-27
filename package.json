@@ -2,13 +2,13 @@
   "name": "inventory-app",
   "version": "0.1.0",
   "homepage": "https://lhthuan.github.io/inventory-lookup/",
-"scripts": {
-  "dev": "vite",
-  "build": "vite build",
-  "preview": "vite preview",
-  "predeploy": "npm run build",
-  "deploy": "gh-pages -d dist"
-},
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "predeploy": "npm run build",
+    "deploy": "gh-pages -d dist"
+  },
   "dependencies": {
     "@vitejs/plugin-react": "^5.1.4",
     "react": "^19.2.4",
@@ -17,6 +17,6 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
-    "gh-pages": "^6.3.0"
+    "gh-pages": "^6.1.0"
   }
 }
